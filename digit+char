@@ -1,0 +1,409 @@
+import os
+import gzip
+import numpy as np
+import matplotlib.pyplot as plt
+import cv2
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+
+
+file_path = r"C:\Users\mLc\Downloads\gzip\gzip\emnist-byclass-train-images-idx3-ubyte.gz"
+if os.path.exists(file_path):
+    print("File exists!")
+else:
+    print("File not found.")
+  
+def load_emnist_images(file_path):
+    with gzip.open(file_path, 'rb') as f:
+        f.read(16)  
+        data = np.frombuffer(f.read(), dtype=np.uint8)
+        data = data.reshape(-1, 28, 28)  
+        return data
+
+
+def load_emnist_labels(file_path):
+    with gzip.open(file_path, 'rb') as f:
+        f.read(8) 
+        labels = np.frombuffer(f.read(), dtype=np.uint8)
+        return labels
+    
+def preprocess_images(images):
+    
+    images = images.astype("float32") / 255.0
+    return images
+
+def segment_image(image):
+    rows = np.any(image, axis=1)
+    cols = np.any(image, axis=0)
+    rmin, rmax = np.where(rows)[0][[0, -1]]
+    cmin, cmax = np.where(cols)[0][[0, -1]]
+    
+    cropped = image[rmin:rmax + 1, cmin:cmax + 1]
+    
+    resized = cv2.resize(cropped, (28, 28), interpolation=cv2.INTER_AREA)
+    return resized
+
+
+def augment_images_without_flip(images, labels, num_augmentations=5):
+    datagen = ImageDataGenerator(
+        rotation_range=10, 
+        width_shift_range=0.1, 
+        height_shift_range=0.1, 
+        zoom_range=0.1, 
+    )
+    
+    augmented_images = []
+    augmented_labels = []
+    
+    for i in range(len(images)):
+        
+        image = np.expand_dims(images[i], axis=(0, -1))
+        
+        count = 0
+        for augmented_image in datagen.flow(image, batch_size=1):
+            augmented_images.append(augmented_image[0, :, :, 0])  
+            augmented_labels.append(labels[i])  
+            count += 1
+            if count >= num_augmentations: 
+                break
+    
+    return np.array(augmented_images), np.array(augmented_labels)
+
+# File paths for EMNIST dataset
+images_path = r"C:\Users\mLc\Downloads\gzip\gzip\emnist-byclass-train-images-idx3-ubyte.gz"
+labels_path = r"C:\Users\mLc\Downloads\gzip\gzip\emnist-byclass-train-labels-idx1-ubyte.gz"
+
+images = load_emnist_images(images_path)
+labels = load_emnist_labels(labels_path)
+
+processed_images = preprocess_images(images)
+segmented_images = np.array([segment_image(img) for img in processed_images])
+
+digit_indices = np.where(labels < 10)[0]
+character_indices = np.where(labels >= 10)[0]
+
+digit_images = segmented_images[digit_indices]
+digit_labels = labels[digit_indices]
+
+character_images = segmented_images[character_indices]
+character_labels = labels[character_indices]
+
+# Visualize 10 digit images
+plt.figure(figsize=(10, 5))
+for i in range(10):
+    plt.subplot(2, 5, i + 1)
+    plt.imshow(digit_images[i], cmap='gray')
+    plt.title(f"Digit: {digit_labels[i]}")
+    plt.axis("off")
+
+plt.suptitle("Digits (0-9)", fontsize=16)
+plt.tight_layout()
+plt.show()
+
+# Visualize 10 character images
+plt.figure(figsize=(10, 5))
+for i in range(10):
+    plt.subplot(2, 5, i + 1)
+    plt.imshow(character_images[i], cmap='gray')
+    plt.title(f"Char: {character_labels[i]}")
+    plt.axis("off")
+
+plt.suptitle("Characters (A-Z, a-z)", fontsize=16)
+plt.tight_layout()
+plt.show()
+
+X_train, X_test, y_train, y_test = train_test_split(segmented_images, labels, test_size=0.2, random_state=42)
+
+X_train = X_train.reshape(-1, 28, 28, 1).astype('float32') / 255.0
+X_test = X_test.reshape(-1, 28, 28, 1).astype('float32') / 255.0
+
+def plot_sample_images(X, y, title):
+    plt.figure(figsize=(10, 5))
+    for i in range(10):
+        plt.subplot(2, 5, i + 1)
+        plt.imshow(X[i].reshape(28, 28), cmap='gray')
+        plt.title(f"Label: {y[i]}")
+        plt.axis('off')
+    plt.suptitle(title, fontsize=16)
+    plt.tight_layout()
+    plt.show()
+
+plot_sample_images(X_train, y_train, "Sample Training Images")
+
+model = tf.keras.Sequential([
+    tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
+    tf.keras.layers.MaxPooling2D((2, 2)),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.Conv2D(64, (3, 3), activation='relu'),
+    tf.keras.layers.MaxPooling2D((2, 2)),
+    tf.keras.layers.Dropout(0.2),
+    tf.keras.layers.Flatten(),
+    tf.keras.layers.Dense(128, activation='relu'),
+    tf.keras.layers.Dropout(0.5),
+    tf.keras.layers.Dense(62, activation='softmax') 
+])
+
+# Compile the model
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+# Train the model
+history = model.fit(X_train, y_train, epochs=100, validation_data=(X_test, y_test))
+
+plt.figure(figsize=(10, 5))
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Training and Validation Accuracy')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.show()
+
+plt.figure(figsize=(10, 5))
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Training and Validation Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.legend()
+plt.show()
+
+model_path = "G:/model/cnn_model.h5"
+model.save(model_path)
+print(f"Model saved to {model_path}")
+
+
+loaded_model = tf.keras.models.load_model(model_path)
+
+import random
+
+random_indices = random.sample(range(len(X_test)), 10)
+random_images = X_test[random_indices]
+random_labels = y_test[random_indices]
+
+predictions = loaded_model.predict(random_images)
+
+plt.figure(figsize=(10, 5))
+for i in range(10):
+    plt.subplot(2, 5, i + 1)
+    plt.imshow(random_images[i].reshape(28, 28), cmap='gray')
+    pred_label = np.argmax(predictions[i])
+    plt.title(f"True: {random_labels[i]}\nPred: {pred_label}")
+    plt.axis('off')
+plt.suptitle("Predictions on Random Test Samples", fontsize=16)
+plt.tight_layout()
+plt.show()
+
+bpoints = [deque(maxlen=1024)]
+gpoints = [deque(maxlen=1024)]
+rpoints = [deque(maxlen=1024)]
+
+
+blue_index = 0
+green_index = 0
+red_index = 0
+
+kernel = np.ones((5, 5), np.uint8)
+
+
+colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+colorIndex = 0
+
+
+line_thickness = 12
+
+# Canvas setup
+paintWindow = np.zeros((471, 636, 3)) + 255
+paintWindow = cv2.rectangle(paintWindow, (40, 1), (140, 65), (0, 0, 0), 2)
+paintWindow = cv2.rectangle(paintWindow, (160, 1), (255, 65), (255, 0, 0), 2)
+paintWindow = cv2.rectangle(paintWindow, (275, 1), (370, 65), (0, 255, 0), 2)
+paintWindow = cv2.rectangle(paintWindow, (390, 1), (485, 65), (0, 0, 255), 2)
+cv2.putText(paintWindow, "PREDICT", (49, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+cv2.putText(paintWindow, "BLUE", (185, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+cv2.putText(paintWindow, "GREEN", (298, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+cv2.putText(paintWindow, "RED", (420, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+cv2.putText(paintWindow, "CLEAR", (510, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+cv2.namedWindow('Paint', cv2.WINDOW_AUTOSIZE)
+
+
+mpHands = mp.solutions.hands
+hands = mpHands.Hands(max_num_hands=1, min_detection_confidence=0.7)
+mpDraw = mp.solutions.drawing_utils
+
+cap = cv2.VideoCapture(0)
+ret = True
+while ret:
+    
+    ret, frame = cap.read()
+
+    x, y, c = frame.shape
+
+    
+    frame = cv2.flip(frame, 1)
+    framergb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    frame = cv2.rectangle(frame, (40, 1), (140, 65), (0, 0, 0), 2)
+    frame = cv2.rectangle(frame, (160, 1), (255, 65), (255, 0, 0), 2)
+    frame = cv2.rectangle(frame, (275, 1), (370, 65), (0, 255, 0), 2)
+    frame = cv2.rectangle(frame, (390, 1), (485, 65), (0, 0, 255), 2)
+    frame = cv2.rectangle(frame, (500, 1), (585, 65), (0, 0, 0), 2)
+    cv2.putText(frame, "PREDICT", (49, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+    cv2.putText(frame, "BLUE", (185, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+    cv2.putText(frame, "GREEN", (298, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+    cv2.putText(frame, "RED", (420, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+    cv2.putText(frame, "CLEAR", (510, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+
+    
+    result = hands.process(framergb)
+
+    
+    if result.multi_hand_landmarks:
+        landmarks = []
+        for handslms in result.multi_hand_landmarks:
+            for lm in handslms.landmark:
+                lmx = int(lm.x * 640)
+                lmy = int(lm.y * 480)
+                landmarks.append([lmx, lmy])
+
+            
+            mpDraw.draw_landmarks(frame, handslms, mpHands.HAND_CONNECTIONS)
+        fore_finger = (landmarks[8][0], landmarks[8][1])
+        center = fore_finger
+        thumb = (landmarks[4][0], landmarks[4][1])
+        cv2.circle(frame, center, 3, (0, 255, 0), -1)
+        if thumb[1] - center[1] < 30:
+            bpoints.append(deque(maxlen=512))
+            blue_index += 1
+            gpoints.append(deque(maxlen=512))
+            green_index += 1
+            rpoints.append(deque(maxlen=512))
+            red_index += 1
+        elif center[1] <= 65:
+            if 40 <= center[0] <= 140:  
+                
+                drawing_area_gray = cv2.imread("drawing_area_gray.png", cv2.IMREAD_GRAYSCALE)
+                if np.any(drawing_area_gray):
+                    contours, _ = cv2.findContours(drawing_area_gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        x, y, w, h = cv2.boundingRect(contours[0])
+                        cropped_image = drawing_area_gray[y + 1:y + h - 1, x + 1:x + w - 1]
+                        resized_image = cv2.resize(cropped_image, (28, 28))
+
+                        
+                        if np.mean(resized_image) >= 250:
+                            print("Background is full white. Skipping prediction.")
+                        else:
+                            plt.figure()
+                            plt.imshow(resized_image, cmap='gray')
+                            plt.title('Cropped Grayscale Image')
+                            plt.axis('off')
+                            plt.show()
+
+                            resized_image = resized_image.astype('float32') / 255.0
+                            resized_image = resized_image.reshape(1, 28, 28, 1)  
+
+                           
+                            predictions = model.predict(resized_image)
+                            predicted_label = np.argmax(predictions)
+
+                    
+                            char_mapping = {
+                                0: 'Zero', 1: 'One', 2: 'Two', 3: 'Three', 4: 'Four',
+                                5: 'Five', 6: 'Six', 7: 'Seven', 8: 'Eight', 9: 'Nine',
+                                10: 'A', 11: 'B', 12: 'C', 13: 'D', 14: 'E', 15: 'F',
+                                16: 'G', 17: 'H', 18: 'I', 19: 'J', 20: 'K', 21: 'L',
+                                22: 'M', 23: 'N', 24: 'O', 25: 'P', 26: 'Q', 27: 'R',
+                                28: 'S', 29: 'T', 30: 'U', 31: 'V', 32: 'W', 33: 'X',
+                                34: 'Y', 35: 'Z', 36: 'a', 37: 'b', 38: 'c', 39: 'd',
+                                40: 'e', 41: 'f', 42: 'g', 43: 'h', 44: 'i', 45: 'j',
+                                46: 'k', 47: 'l', 48: 'm', 49: 'n', 50: 'o', 51: 'p',
+                                52: 'q', 53: 'r', 54: 's', 55: 't', 56: 'u', 57: 'v',
+                                58: 'w', 59: 'x', 60: 'y', 61: 'z'
+                            }
+                            predicted_char = char_mapping.get(predicted_label, 'Unknown')
+
+                            # Check if the label represents a digit or a character
+                            if predicted_label < 10:
+                                label_type = 'Digit'
+                            else:
+                                label_type = 'Character'
+
+                            print(f"Predicted {label_type}: {predicted_label} ({predicted_char})")
+
+                            # Overlay the prediction on the frame
+                            cv2.putText(frame, f"Predicted {label_type}: {predicted_char}", (10, 400),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+
+            elif 160 <= center[0] <= 255:
+                colorIndex = 0  # Blue
+            elif 275 <= center[0] <= 370:
+                colorIndex = 1  # Green
+            elif 390 <= center[0] <= 485:
+                colorIndex = 2  # Red
+            elif 500 <= center[0] <= 585: 
+                bpoints = [deque(maxlen=512)]
+                gpoints = [deque(maxlen=512)]
+                rpoints = [deque(maxlen=512)]
+                ypoints = [deque(maxlen=512)]
+
+                blue_index = 0
+                green_index = 0
+                red_index = 0
+                yellow_index = 0
+
+                paintWindow[67:,:,:] = 255
+        else:
+            if colorIndex == 0:
+                bpoints[blue_index].appendleft(center)
+            elif colorIndex == 1:
+                gpoints[green_index].appendleft(center)
+            elif colorIndex == 2:
+                rpoints[red_index].appendleft(center)
+
+    
+    points = [bpoints, gpoints, rpoints]
+    for i in range(len(points)):
+        for j in range(len(points[i])):
+            for k in range(1, len(points[i][j])):
+                if points[i][j][k - 1] is None or points[i][j][k] is None:
+                    continue
+                cv2.line(frame, points[i][j][k - 1], points[i][j][k], colors[i], line_thickness)
+                cv2.line(paintWindow, points[i][j][k - 1], points[i][j][k], colors[i], line_thickness)
+
+    cv2.imshow("Output", frame)
+    cv2.imshow("Paint", paintWindow)
+
+
+    drawing_area = paintWindow[67:, :]
+
+   
+    cv2.imshow("Drawing Area", drawing_area)
+    drawing_area_resized = cv2.resize(drawing_area, (200, 200))
+
+    
+    drawing_area_resized = np.uint8(drawing_area_resized)
+    
+    
+    drawing_area_gray = cv2.cvtColor(drawing_area_resized, cv2.COLOR_BGR2GRAY)
+    
+   
+    inverted_gray = 255 - drawing_area_gray
+    cv2.imshow("Resized Grayscale Image", inverted_gray)
+    
+    cv2.imwrite("drawing_area_gray.png", inverted_gray)
+
+
+    key = cv2.waitKey(1)
+    if key == ord('q'):
+        break
+    elif key == ord('='):  
+        line_thickness += 1
+    elif key == ord('-'): 
+        line_thickness = max(1, line_thickness - 1)  
+
+
+cap.release()
+cv2.destroyAllWindows()
+
